@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
     CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
 
+    def model_post_init(self, __context) -> None:
+        # Railway provides plain postgresql:// — patch to asyncpg variant
+        for prefix, replacement in [("postgres://", "postgresql+asyncpg://"), ("postgresql://", "postgresql+asyncpg://")]:
+            if self.DATABASE_URL.startswith(prefix):
+                object.__setattr__(self, "DATABASE_URL", self.DATABASE_URL.replace(prefix, "postgresql+asyncpg://", 1))
+        if self.SYNC_DATABASE_URL.startswith("postgres://"):
+            object.__setattr__(self, "SYNC_DATABASE_URL", self.SYNC_DATABASE_URL.replace("postgres://", "postgresql://", 1))
+
     OPENAI_API_KEY: str = ""
     OPENAI_TEXT_MODEL: str = "gpt-4o-mini"
     OPENAI_IMAGE_MODEL: str = "dall-e-3"

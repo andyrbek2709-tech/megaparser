@@ -1,0 +1,118 @@
+version: "3.9"
+
+networks:
+  social-engine-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_data:
+  ml_models_data:
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: social_engine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - social-engine-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - social-engine-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+      - media_data:/app/media
+      - ml_models_data:/app/ml_models
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    networks:
+      - social-engine-net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    volumes:
+      - ./backend:/app
+      - media_data:/app/media
+      - ml_models_data:/app/ml_models
+    env_file:
+      - .env
+    networks:
+      - social-engine-net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.workers.celery_app beat --loglevel=info --scheduler celery.beat:PersistentScheduler
+    volumes:
+      - ./backend:/app
+    env_file:
+      - .env
+    networks:
+      - social-engine-net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    networks:
+      - social-engine-net
+    depends_on:
+      - backend
